@@ -1576,6 +1576,7 @@ def register_modules(registry):
         config = "CONFIG_QCOM_WCD_USBSS_I2C",
         srcs = [
             # do not sort
+            "drivers/soc/qcom/wcd-usbss-oplus.h",
             "drivers/soc/qcom/wcd-usbss-priv.h",
             "drivers/soc/qcom/wcd-usbss-reg-masks.h",
             "drivers/soc/qcom/wcd-usbss-reg-shifts.h",
