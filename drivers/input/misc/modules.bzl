@@ -10,6 +10,16 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/input/misc/qpnp-power-on",
+        out = "qpnp-power-on.ko",
+        config = "CONFIG_INPUT_QPNP_POWER_ON",
+        srcs = [
+            # do not sort
+            "drivers/input/misc/qpnp-power-on.c",
+        ],
+    )
+
+    registry.register(
         name = "drivers/input/misc/qcom-hv-haptics",
         out = "qcom-hv-haptics.ko",
         config = "CONFIG_INPUT_QCOM_HV_HAPTICS",
