@@ -1,6 +1,7 @@
 load("//build/kernel/kleaf:kernel.bzl", "kernel_module_group")
 load(":configs/sun_consolidate.bzl", "sun_consolidate_config")
 load(":configs/sun_perf.bzl", "sun_perf_config")
+load(":configs/sun_perf_oplus.bzl", "sun_perf_oplus_config")
 load(":configs/sun_tuivm.bzl", "sun_tuivm_config")
 load(":configs/sun_tuivm_debug.bzl", "sun_tuivm_debug_config")
 load(":kleaf-scripts/android_build.bzl", "define_typical_android_build")
@@ -53,7 +54,7 @@ def define_sun():
     define_typical_android_build(
         name = "sun",
         consolidate_config = sun_consolidate_config,
-        perf_config = sun_perf_config,
+        perf_config = dict(sun_perf_config, **sun_perf_oplus_config),
         consolidate_build_img_opts = consolidate_build_img_opts,
         perf_build_img_opts = perf_build_img_opts,
         consolidate_kwargs = {
