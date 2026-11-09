@@ -965,6 +965,24 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/soc/qcom/tmecom/tmecom-intf",
+        out = "tmecom-intf.ko",
+        config = "CONFIG_MSM_TMECOM_QMP",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/tmecom/tmecom.c",
+            "drivers/soc/qcom/tmecom/tmecom.h",
+            "drivers/soc/qcom/tmecom/tme_hwkm_master.c",
+            "drivers/soc/qcom/tmecom/tme_hwkm_master_intf.h",
+            "drivers/soc/qcom/tmecom/tmelog.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/mailbox/msm_qmp",
+        ],
+    )
+
+    registry.register(
         name = "drivers/soc/qcom/qcom_ice",
         out = "qcom_ice.ko",
         config = "CONFIG_QCOM_INLINE_CRYPTO_ENGINE",
@@ -975,6 +993,7 @@ def register_modules(registry):
         ],
         deps = [
             # do not sort
+            "drivers/soc/qcom/tmecom/tmecom-intf",
             "drivers/firmware/qcom/qcom-scm",
             "drivers/virt/gunyah/gh_rm_drv",
             "drivers/virt/gunyah/gh_msgq",

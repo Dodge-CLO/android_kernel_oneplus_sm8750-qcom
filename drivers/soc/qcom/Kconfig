@@ -1459,4 +1459,6 @@ config QCOM_WEAR_CONFIG
 	  Platform parameters are exposed as class attributes that
 	  can be queried and updated at runtime.
 
+source "$(KCONFIG_EXT_PREFIX)drivers/soc/qcom/tmecom/Kconfig"
+
 endmenu

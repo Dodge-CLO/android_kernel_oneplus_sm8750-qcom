@@ -15,6 +15,7 @@ sun_perf_oplus_config = {
     "CONFIG_QCOM_MEM_HOOKS": "m",
     "CONFIG_QCOM_PMIC_ECID": "m",
     "CONFIG_QCOM_QFPROM_SYS": "m",
+    "CONFIG_MSM_TMECOM_QMP": "m",
     "CONFIG_QCOM_SPMI_PMIC_ERR_DBG": "m",
     "CONFIG_QTI_CPUFREQ_STATS_SCMI_V2": "m",
     "CONFIG_QTI_MPAM_MSC": "m",

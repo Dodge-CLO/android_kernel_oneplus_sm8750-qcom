@@ -1,3 +1,4 @@
+qcom_dynamic_ramoops.ko
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
 arm_smmu.ko
@@ -82,6 +83,7 @@ qrtr.ko
 qcom_aoss.ko
 msm_qmp.ko
 ufshcd-crypto-qti.ko
+tmecom-intf.ko
 qcom_ice.ko
 ufs-qcom.ko
 gh_arm_drv.ko
