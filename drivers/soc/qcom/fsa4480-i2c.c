@@ -278,6 +278,19 @@ int fsa4480_reg_notifier(struct notifier_block *nb,
 }
 EXPORT_SYMBOL_GPL(fsa4480_reg_notifier);
 
+#ifdef OPLUS_ARCH_EXTENDS
+/*
+ * Used by the OnePlus audio MBHC to detect a cross-connected DIO448x switch.
+ * The 6.12 driver has no vendor detection; the FSA4480/HL5280/WAS4783 parts
+ * never report a cross connection.
+ */
+int fsa4480_check_cross_conn(struct device_node *node)
+{
+	return 0;
+}
+EXPORT_SYMBOL(fsa4480_check_cross_conn);
+#endif /* OPLUS_ARCH_EXTENDS */
+
 /*
  * fsa4480_unreg_notifier - unregister notifier block with fsa driver
  *
