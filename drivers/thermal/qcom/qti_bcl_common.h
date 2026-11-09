@@ -102,6 +102,15 @@ struct bcl_device {
 	unsigned long long		last_bpm_read_ts;
 	unsigned long long		last_bpm_reset_ts;
 	struct bcl_peripheral_data	param[BCL_TYPE_MAX];
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	bool				support_track;
+	int				id;
+	bool				support_dynamic_vbat;
+	struct dynamic_vbat_data	*dynamic_vbat_config;
+	int				dynamic_vbat_config_count;
+	struct notifier_block		psy_nb;
+	struct work_struct		vbat_check_work;
+#endif
 	struct bcl_lvl_stats		stats[MAX_BCL_LVL_COUNT];
 	const struct bcl_desc		*desc;
 	struct notifier_block		nb;

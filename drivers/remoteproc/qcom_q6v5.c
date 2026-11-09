@@ -93,6 +93,11 @@ struct symbol_entry {
 static struct rb_root symbol_tree = RB_ROOT;
 #endif
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#define REMOTEPROC_ADSP "remoteproc-adsp"
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 static int q6v5_load_state_toggle(struct qcom_q6v5 *q6v5, bool enable)
 {
 	int ret;
@@ -441,6 +446,24 @@ static irqreturn_t q6v5_wdog_interrupt(int irq, void *data)
 		rproc_report_crash(q6v5->rproc, RPROC_WATCHDOG);
 	}
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (strstr(q6v5->rproc->name, REMOTEPROC_ADSP)) {
+		if (!IS_ERR(msg) && len > 0 && msg[0]) {
+			if (strstr(msg, "err_inject_crash")) {
+				//Via Diag trigger adsp crash reported to the 10050 event
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_DAEMON, \
+					MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", msg);
+			} else {
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+					MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", msg);
+			}
+		} else {
+			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@fatal error without message$$detailData@@audio$$module@@adsp");
+		}
+	}
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 	return IRQ_HANDLED;
 }
 
@@ -498,6 +521,24 @@ static irqreturn_t q6v5_fatal_interrupt(int irq, void *data)
 		__pm_stay_awake(q6v5->ws);
 		rproc_report_crash(q6v5->rproc, RPROC_FATAL_ERROR);
 	}
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (strstr(q6v5->rproc->name, REMOTEPROC_ADSP)) {
+		if (!IS_ERR(msg) && len > 0 && msg[0]) {
+			if (strstr(msg, "err_inject_crash")) {
+				//Via Diag trigger adsp crash reported to the 10050 event
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_DAEMON, \
+					MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", msg);
+			} else {
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+					MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", msg);
+			}
+		} else {
+			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@fatal error without message$$detailData@@audio$$module@@adsp");
+		}
+	}
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 	return IRQ_HANDLED;
 }
