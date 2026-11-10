@@ -42,6 +42,16 @@ static void qti_thermal_pm_notify(void *unused,
 	pr_debug("%s: irq_wakeable=%d\n", __func__, *irq_wakeable);
 }
 
+/*
+ * 6.6 zone drivers (tsens, adc-tm5, qmi sensors, bcl) had set_trip_hyst, so
+ * trip_point_*_hyst was writable and thermal-engine programs hysteresis.
+ * 6.12 thermal_of only marks the temperature writable.
+ */
+static void qti_thermal_trip_flag(void *unused, struct thermal_trip *trip)
+{
+	trip->flags |= THERMAL_TRIP_FLAG_RW_HYST;
+}
+
 static int __init qcom_thermal_vendor_hook_driver_init(void)
 {
 	int ret;
@@ -54,11 +64,18 @@ static int __init qcom_thermal_vendor_hook_driver_init(void)
 		pr_err("Failed to register thermal_pm_notify hook, err:%d\n",
 			ret);
 
+	ret = register_trace_android_vh_update_thermal_trip_flag(
+			qti_thermal_trip_flag, NULL);
+	if (ret)
+		pr_err("Failed to register trip flag hook, err:%d\n", ret);
+
 	return 0;
 }
 
 static void __exit qcom_thermal_vendor_hook_driver_exit(void)
 {
+	unregister_trace_android_vh_update_thermal_trip_flag(
+			qti_thermal_trip_flag, NULL);
 	unregister_trace_android_vh_thermal_pm_notify_suspend(
 			qti_thermal_pm_notify, NULL);
 	unregister_pm_notifier(&qti_thermal_pm_nb);
