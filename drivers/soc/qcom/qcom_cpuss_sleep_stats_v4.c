@@ -133,18 +133,12 @@ static void qcom_create_count_file(struct qcom_stats_prvdata *pdata)
 
 	if (of_device_is_compatible(pdata->pdev->dev.of_node, "qcom,cpuss-sleep-stats-v4")) {
 		struct stats_config *config = pdata->offset;
-		char reg_name[3] = {0};
 
+		/* cluster_dir/cpuss_dir only exist for v6 */
 		for (i = 0; i < ARRAY_SIZE(config->count_regs); i++) {
 			pdata->offset->count_regs[i].base = pdata->base;
-			snprintf(reg_name, sizeof(reg_name), pdata->offset->count_regs[i].name);
-			if (!strcmp(reg_name, "CL"))
-				debugfs_create_file(pdata->offset->count_regs[i].name, 0400,
-				pdata->cluster_dir[i], (void *)&pdata->offset->count_regs[i],
-				&qcom_stats_count_fops);
-			else if (!strcmp(reg_name, "SS"))
-				debugfs_create_file(pdata->offset->count_regs[i].name, 0400,
-				pdata->cpuss_dir, (void *)&pdata->offset->count_regs[i],
+			debugfs_create_file(pdata->offset->count_regs[i].name, 0400,
+				pdata->rootdir, (void *)&pdata->offset->count_regs[i],
 				&qcom_stats_count_fops);
 		}
 	}
@@ -186,18 +180,12 @@ static void qcom_create_resindency_file(struct qcom_stats_prvdata *pdata)
 
 	if (of_device_is_compatible(pdata->pdev->dev.of_node, "qcom,cpuss-sleep-stats-v4")) {
 		struct stats_config *config = pdata->offset;
-		char reg_name[3] = {0};
 
+		/* cluster_dir/cpuss_dir only exist for v6 */
 		for (i = 0; i < ARRAY_SIZE(config->residency_regs); i++) {
 			pdata->offset->residency_regs[i].base = pdata->base;
-			snprintf(reg_name, sizeof(reg_name), pdata->offset->residency_regs[i].name);
-			if (!strcmp(reg_name, "CL"))
-				debugfs_create_file(pdata->offset->residency_regs[i].name, 0400,
-				pdata->cluster_dir[i], (void *)&pdata->offset->residency_regs[i],
-				&qcom_stats_residency_fops);
-			else if (!strcmp(reg_name, "SS"))
-				debugfs_create_file(pdata->offset->residency_regs[i].name, 0400,
-				pdata->cpuss_dir, (void *)&pdata->offset->residency_regs[i],
+			debugfs_create_file(pdata->offset->residency_regs[i].name, 0400,
+				pdata->rootdir, (void *)&pdata->offset->residency_regs[i],
 				&qcom_stats_residency_fops);
 		}
 	}
