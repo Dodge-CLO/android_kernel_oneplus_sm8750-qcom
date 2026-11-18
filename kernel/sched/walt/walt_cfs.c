@@ -12,6 +12,11 @@
 #include "trace.h"
 #include "drivers/android/binder_internal.h"
 #include "drivers/android/binder_trace.h"
+#if IS_ENABLED(CONFIG_ANDROID_BINDER_IPC_RUST)
+/* rust_binder.h defines the handle types the hook declarations use */
+#include "drivers/android/binder/rust_binder.h"
+#include <trace/hooks/rust_binder.h>
+#endif
 
 static void create_freq_to_cost_pd(struct em_perf_domain *pd)
 {
@@ -1198,6 +1203,36 @@ walt_select_task_rq_fair(void *unused, struct task_struct *p, int prev_cpu,
 	update_instruction_data(SELECT_TASK_RQ_FAIR);
 }
 
+/*
+ * A binder thread serving a transaction from a task in a related thread group
+ * (or from a low-latency MVP task) runs as low latency; shared by the C and
+ * Rust Binder hooks.
+ */
+static void binder_update_low_latency(struct task_struct *task,
+				      struct walt_task_struct *wts)
+{
+	if (current == task)
+		return;
+
+	if (task && ((task_in_related_thread_group(current) &&
+			task->group_leader->prio < MAX_RT_PRIO) ||
+			(walt_get_mvp_task_prio(current) == WALT_LL_MVP) ||
+			(current->group_leader->prio < MAX_RT_PRIO &&
+			task_in_related_thread_group(task))))
+		wts->low_latency |= WALT_LOW_LATENCY_BINDER_BIT;
+	else
+		/*
+		 * Clear low_latency flag if criterion above is not met, this
+		 * will handle usecase where for a binder thread WALT_LOW_LATENCY_BINDER_BIT
+		 * is set by one task and before WALT clears this flag after timer expiry
+		 * some other task tries to use same binder thread.
+		 *
+		 * The only gets cleared when binder transaction is initiated
+		 * and the above condition to set flags is not satisfied.
+		 */
+		wts->low_latency &= ~WALT_LOW_LATENCY_BINDER_BIT;
+}
+
 static void binder_set_priority_hook(void *data,
 				struct binder_transaction *bndrtrans, struct task_struct *task)
 {
@@ -1217,27 +1252,7 @@ static void binder_set_priority_hook(void *data,
 		wts->boost = TASK_BOOST_STRICT_MAX;
 	}
 
-	if (current == task)
-		goto out;
-
-	if (task && ((task_in_related_thread_group(current) &&
-			task->group_leader->prio < MAX_RT_PRIO) ||
-			(walt_get_mvp_task_prio(current) == WALT_LL_MVP) ||
-			(current->group_leader->prio < MAX_RT_PRIO &&
-			task_in_related_thread_group(task))))
-		wts->low_latency |= WALT_LOW_LATENCY_BINDER_BIT;
-	else
-		/*
-		 * Clear low_latency flag if criterion above is not met, this
-		 * will handle usecase where for a binder thread WALT_LOW_LATENCY_BINDER_BIT
-		 * is set by one task and before WALT clears this flag after timer expiry
-		 * some other task tries to use same binder thread.
-		 *
-		 * The only gets cleared when binder transaction is initiated
-		 * and the above condition to set flags is not satisfied.
-		 */
-		wts->low_latency &= ~WALT_LOW_LATENCY_BINDER_BIT;
-out:
+	binder_update_low_latency(task, wts);
 	update_instruction_data(BINDER_RESTORE_PRIORITY_HOOK);
 }
 
@@ -1257,6 +1272,80 @@ static void binder_restore_priority_hook(void *data,
 		wts->boost = bndrtrans->android_vendor_data1;
 	update_instruction_data(BINDER_RESTORE_PRIORITY_HOOK);
 }
+
+#if IS_ENABLED(CONFIG_ANDROID_BINDER_IPC_RUST)
+/*
+ * Rust Binder equivalents of the hooks above. The restore hook is called once
+ * for every synchronous transaction the thread replied to (paired with a set
+ * call), and also when the thread goes idle, where binder_depth is already 0.
+ * Unlike the C restore hook, only a level that raised the boost puts the old
+ * boost back, so a task's own STRICT_MAX boost survives transactions that
+ * did not change it.
+ */
+static void rust_binder_set_priority_hook(void *data, rust_binder_transaction t,
+					  struct task_struct *task)
+{
+	struct walt_task_struct *wts = (struct walt_task_struct *)android_task_vendor_data(task);
+	struct walt_task_struct *current_wts =
+			(struct walt_task_struct *)android_task_vendor_data(current);
+	u32 bit;
+
+	if (unlikely(walt_disabled))
+		return;
+
+	if (walt_quiet_state)
+		return;
+
+	get_entry_instr(BINDER_SET_PRIORITY_HOOK);
+	if (t && !(rust_binder_transaction_flags(t) & TF_ONE_WAY)) {
+		if (wts->binder_depth >= 32) {
+			if (wts->binder_depth_overflow < U8_MAX)
+				wts->binder_depth_overflow++;
+			goto low_latency;
+		}
+		bit = BIT(wts->binder_depth);
+		wts->binder_depth++;
+		if (current_wts->boost == TASK_BOOST_STRICT_MAX) {
+			if (!wts->binder_boost_levels)
+				wts->binder_saved_boost = wts->boost;
+			wts->binder_boost_levels |= bit;
+			wts->boost = TASK_BOOST_STRICT_MAX;
+		}
+	}
+low_latency:
+	binder_update_low_latency(task, wts);
+	update_instruction_data(BINDER_SET_PRIORITY_HOOK);
+}
+
+static void rust_binder_restore_priority_hook(void *data, struct task_struct *task)
+{
+	struct walt_task_struct *wts = (struct walt_task_struct *)android_task_vendor_data(task);
+	u32 bit;
+
+	if (unlikely(walt_disabled))
+		return;
+
+	if (walt_quiet_state)
+		return;
+
+	get_entry_instr(BINDER_RESTORE_PRIORITY_HOOK);
+	if (wts->binder_depth_overflow) {
+		wts->binder_depth_overflow--;
+		goto out;
+	}
+	if (!wts->binder_depth)
+		goto out;
+	wts->binder_depth--;
+	bit = BIT(wts->binder_depth);
+	if (wts->binder_boost_levels & bit) {
+		wts->binder_boost_levels &= ~bit;
+		if (!wts->binder_boost_levels && wts->boost == TASK_BOOST_STRICT_MAX)
+			wts->boost = wts->binder_saved_boost;
+	}
+out:
+	update_instruction_data(BINDER_RESTORE_PRIORITY_HOOK);
+}
+#endif
 
 /*
  * Higher prio mvp can preempt lower prio mvp.
@@ -1667,6 +1756,11 @@ void walt_cfs_init(void)
 
 	register_trace_android_vh_binder_set_priority(binder_set_priority_hook, NULL);
 	register_trace_android_vh_binder_restore_priority(binder_restore_priority_hook, NULL);
+#if IS_ENABLED(CONFIG_ANDROID_BINDER_IPC_RUST)
+	register_trace_android_vh_rust_binder_set_priority(rust_binder_set_priority_hook, NULL);
+	register_trace_android_vh_rust_binder_restore_priority(rust_binder_restore_priority_hook,
+							      NULL);
+#endif
 
 	register_trace_android_rvh_check_preempt_wakeup_fair(walt_cfs_check_preempt_wakeup_fair,
 			NULL);

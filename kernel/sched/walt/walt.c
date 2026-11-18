@@ -6231,6 +6231,8 @@ static int walt_module_init(void)
 {
 	/* compile time checks for vendor data size */
 	WALT_VENDOR_DATA_SIZE_TEST(struct walt_task_group, struct task_group);
+	/* android_task_vendor_data() is CONFIG_GKI_TASK_STRUCT_VENDOR_SIZE_MAX bytes */
+	BUILD_BUG_ON(sizeof(struct walt_task_struct) > CONFIG_GKI_TASK_STRUCT_VENDOR_SIZE_MAX);
 
 	register_trace_android_vh_update_topology_flags_workfn(
 			android_vh_update_topology_flags_workfn, NULL);

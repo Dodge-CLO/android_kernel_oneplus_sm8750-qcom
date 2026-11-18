@@ -181,6 +181,19 @@ struct walt_task_struct {
 	 *              when misfit was first detected under smart_freq limiting.
 	 */
 	u64				sf_misfit_time;
+
+	/*
+	 * Rust Binder: its restore hook gets no transaction to keep the
+	 * replaced boost in, so it is kept per task. binder_depth counts the
+	 * nested synchronous transactions this task is serving; bit n of
+	 * binder_boost_levels is set when level n raised the task to
+	 * TASK_BOOST_STRICT_MAX, and binder_saved_boost is the boost from
+	 * before the first such level.
+	 */
+	int				binder_saved_boost;
+	u32				binder_boost_levels;
+	u8				binder_depth;
+	u8				binder_depth_overflow;
 };
 
 #define wts_to_ts(wts) ({ \
