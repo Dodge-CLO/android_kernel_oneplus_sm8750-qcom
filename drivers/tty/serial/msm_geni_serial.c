@@ -195,6 +195,8 @@ static bool con_enabled = IS_ENABLED(CONFIG_SERIAL_MSM_GENI_CONSOLE_DEFAULT_ENAB
 #define DEF_FIFO_WIDTH_BITS	(32)
 
 #define WAKEBYTE_TIMEOUT_MSEC	(2000)
+/* Idle time after which a runtime-PM vote with no owner is treated as leaked */
+#define RPM_LEAK_IDLE_MSEC	(30000)
 #define WAIT_XFER_MAX_ITER	(2)
 #define WAIT_XFER_MAX_TIMEOUT_US	(150)
 #define WAIT_XFER_MIN_TIMEOUT_US	(100)
@@ -567,6 +569,8 @@ struct msm_geni_serial_port {
 	struct delayed_work wakeup_irq_dwork;
 	struct completion wakeup_comp;
 	atomic_t wakeup_pending_resume;
+	struct delayed_work rpm_leak_dwork;
+	unsigned int rpm_leak_drops;
 	atomic_t flush_buffers;
 	struct ktermios *current_termios;
 	bool resuming_from_deep_sleep;
@@ -1516,6 +1520,90 @@ static int wait_for_transfers_inflight(struct uart_port *uport)
 	return 0;
 }
 
+/*
+ * msm_geni_serial_rpm_leak_sched() - arm the leaked runtime-PM vote check.
+ *
+ * @port: pointer to the serial port
+ */
+static void msm_geni_serial_rpm_leak_sched(struct msm_geni_serial_port *port)
+{
+	if (uart_console(&port->uport) || !port->geni_wake)
+		return;
+	mod_delayed_work(system_power_efficient_wq, &port->rpm_leak_dwork,
+			 msecs_to_jiffies(RPM_LEAK_IDLE_MSEC));
+}
+
+/*
+ * msm_geni_serial_rpm_leak_work() - drop runtime-PM votes that have no owner.
+ *
+ * Every legitimate long-lived vote on a non-console port is either a client
+ * clock vote (ioctl_count, also used by the hs_uart_operation node) or
+ * power/control=on (runtime_auto false). Tx holds a vote only while a
+ * transfer is queued, and the wakeup worker only while check_wakeup_byte or
+ * wakeup_pending_resume is set. If none of those hold, the port has been
+ * idle for RPM_LEAK_IDLE_MSEC and usage_count is still above zero, the
+ * remaining votes were leaked. They keep the port runtime-active, which keeps
+ * geni_wake held and blocks system suspend until reboot. Drop them and let
+ * the port autosuspend.
+ *
+ * @work: pointer to the work structure
+ */
+static void msm_geni_serial_rpm_leak_work(struct work_struct *work)
+{
+	struct msm_geni_serial_port *port = container_of(to_delayed_work(work),
+			struct msm_geni_serial_port, rpm_leak_dwork);
+	struct uart_port *uport = &port->uport;
+	struct device *dev = uport->dev;
+	struct tty_port *tport = &uport->state->port;
+	unsigned long flags;
+	u64 idle_ns;
+	int usage, dropped = 0;
+	bool busy;
+
+	if (!mutex_trylock(&tport->mutex)) {
+		msm_geni_serial_rpm_leak_sched(port);
+		return;
+	}
+
+	if (port->port_state != UART_PORT_OPEN || port->ioctl_count ||
+	    !pm_runtime_enabled(dev) || !dev->power.runtime_auto)
+		goto out;
+
+	spin_lock_irqsave(&uport->lock, flags);
+	usage = atomic_read(&dev->power.usage_count);
+	busy = port->tx_dma || port->xmit_size ||
+	       port->split_dma_tre.immediate_dma_in_progress ||
+	       !kfifo_is_empty(&tport->xmit_fifo) ||
+	       atomic_read(&port->check_wakeup_byte) ||
+	       atomic_read(&port->wakeup_pending_resume);
+	idle_ns = ktime_get_mono_fast_ns() - READ_ONCE(dev->power.last_busy);
+
+	if (usage > 0 && !busy &&
+	    idle_ns >= (u64)RPM_LEAK_IDLE_MSEC * NSEC_PER_MSEC) {
+		/* Drop only the votes seen here, never one taken after the check */
+		for (; dropped < usage &&
+		       atomic_read(&dev->power.usage_count) > 0; dropped++)
+			pm_runtime_put_noidle(dev);
+	}
+	spin_unlock_irqrestore(&uport->lock, flags);
+
+	if (dropped) {
+		port->rpm_leak_drops += dropped;
+		dev_warn(dev, "Dropped %d leaked runtime PM vote(s), idle %llu ms, total %u\n",
+			 dropped, idle_ns / NSEC_PER_MSEC, port->rpm_leak_drops);
+		UART_LOG_DBG(port->ipc_log_pwr, dev,
+			     "%s: dropped %d leaked vote(s), idle %llu ms\n",
+			     __func__, dropped, idle_ns / NSEC_PER_MSEC);
+		pm_runtime_mark_last_busy(dev);
+		pm_request_autosuspend(dev);
+	} else if (usage > 0) {
+		/* Still in use, or not idle long enough yet: look again later */
+		msm_geni_serial_rpm_leak_sched(port);
+	}
+out:
+	mutex_unlock(&tport->mutex);
+}
+
 static int vote_clock_on(struct uart_port *uport)
 {
 	struct msm_geni_serial_port *port = GET_DEV_PORT(uport);
@@ -1583,6 +1671,8 @@ static int vote_clock_off(struct uart_port *uport)
 
 	port->ioctl_count--;
 	msm_geni_serial_power_off(uport);
+	if (!port->ioctl_count)
+		msm_geni_serial_rpm_leak_sched(port);
 	usage_count = atomic_read(&uport->dev->power.usage_count);
 	UART_LOG_DBG(port->ipc_log_pwr, uport->dev, "%s:%s ioctl:%d usage_count:%d\n",
 		     __func__, current->comm, port->ioctl_count, usage_count);
@@ -1804,6 +1894,11 @@ static int msm_geni_serial_power_on(struct uart_port *uport)
 				mutex_unlock(&tport->mutex);
 		}
 	} else {
+		/*
+		 * Mark the port busy before taking the vote, so the leaked-vote
+		 * check never mistakes a vote that was just taken for a leak.
+		 */
+		pm_runtime_mark_last_busy(uport->dev);
 		ret = pm_runtime_get_sync(uport->dev);
 		if (ret < 0) {
 			UART_LOG_DBG(port->ipc_log_pwr, uport->dev, "%s Err\n", __func__);
@@ -4713,6 +4808,8 @@ static void msm_geni_serial_shutdown(struct uart_port *uport)
 
 	UART_LOG_DBG(msm_port->ipc_log_misc, uport->dev, "%s: %d\n", __func__, true);
 	msm_port->port_state = UART_PORT_SHUTDOWN_IN_PROGRESS;
+	if (!uart_console(uport) && msm_port->geni_wake)
+		cancel_delayed_work_sync(&msm_port->rpm_leak_dwork);
 
 	start_time = geni_capture_start_time(&msm_port->se, msm_port->ipc_log_kpi,
 					     __func__, msm_port->uart_kpi);
@@ -6302,6 +6399,8 @@ static int msm_geni_serial_read_dtsi(struct platform_device *pdev,
 				"Failed to register wakeup_source\n");
 			return -ENOMEM;
 		}
+		INIT_DELAYED_WORK(&dev_port->rpm_leak_dwork,
+				  msm_geni_serial_rpm_leak_work);
 	}
 
 	if (of_property_read_bool(pdev->dev.of_node, "qcom,split-tx-dma-tre")) {
@@ -6646,6 +6745,8 @@ static void msm_geni_serial_remove(struct platform_device *pdev)
 	if (port->wakeup_irq > 0)
 		destroy_workqueue(port->wakeup_irq_wq);
 	if (!uart_console(&port->uport)) {
+		if (port->geni_wake)
+			cancel_delayed_work_sync(&port->rpm_leak_dwork);
 		wakeup_source_unregister(port->geni_wake);
 		port->geni_wake = NULL;
 	}
